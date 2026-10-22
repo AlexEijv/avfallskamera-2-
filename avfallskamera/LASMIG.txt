@@ -1,0 +1,24 @@
+AVFALLSKAMERA SOM LÄR SIG
+=========================
+Innehåll:
+  index.html           Sidan: kamera + AI som lär sig (MobileNet + k-närmaste-grannar)
+  samples/             Era bilder (0_* = bio, 1_* = plast, 2_* = papper) + manifest.json
+  starta_server.py     Startar lokal server (provar port 8000-8010) och hämtar bilder från ESP32-CAM
+  hamta_bibliotek.py   Laddar ner biblioteken till lib/ så att det funkar utan internet
+
+Steg 1 - medan datorn HAR internet (en gång):
+  python hamta_bibliotek.py
+
+Steg 2 - starta:
+  python starta_server.py
+  Sidan öppnas på http://localhost:8000/index.html (eller nästa lediga port).
+
+Steg 3 - kamera:
+  Webbkamera: välj "Webbkamera" och klicka Starta kameran.
+  ESP32-CAM:  koppla datorn till kamerans wifi, välj "ESP32-CAM", skriv adressen som ger
+              en stillbild (t.ex. http://192.168.4.2/capture) och klicka Starta kameran.
+              Sidan hämtar då en ny bild hela tiden.
+
+Lära AI:n: håll in "+ Bioavfall / Plast / Papper / Inget" medan kameran visar föremålet.
+Fler bilder i samples/: lägg PNG-filer där, skriv in namnen i samples/manifest.json
+och klicka "Träna om från samples".

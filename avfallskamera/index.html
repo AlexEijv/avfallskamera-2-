@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avfallskamera som lär sig</title>
+<style>
+  :root {
+    --bg:#f6f7f4; --card:#fff; --text:#1d2a20; --muted:#5d6b60; --border:#dde3dc;
+    --bio:#5a8f3c; --plast:#e0a21b; --papper:#3b7fc4; --inget:#8a8f8a; --osaker:#8a8f8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151a16; --card:#1e251f; --text:#e8efe9; --muted:#9faea2; --border:#2e3830; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  h2 { font-size:1.05rem; margin:0 0 8px; }
+  p.sub { margin:0 0 20px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:16px; }
+  #kamera { display:flex; justify-content:center; align-items:center; min-height:220px; position:relative; }
+  #kamera video, #kamera img, #kamera canvas { max-width:100%; max-height:380px; border-radius:10px; }
+  button, select, input[type=text] { font:inherit; border-radius:10px; }
+  button { padding:9px 16px; border:0; cursor:pointer; background:var(--bio); color:#fff; font-weight:600; }
+  button.sek { background:transparent; color:var(--text); border:1px solid var(--border); }
+  button:disabled { opacity:.45; cursor:default; }
+  select, input[type=text] { padding:8px 10px; border:1px solid var(--border); background:var(--card); color:var(--text); }
+  .rad { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; align-items:center; }
+  #resultat { margin-top:12px; padding:18px; border-radius:12px; text-align:center; background:var(--osaker); color:#fff; transition:background .25s; }
+  #resultat .stor { font-size:1.8rem; font-weight:700; }
+  #resultat .liten { opacity:.92; margin-top:4px; }
+  .stapel { margin:10px 0; }
+  .stapel .namn { display:flex; justify-content:space-between; font-size:.92rem; margin-bottom:3px; }
+  .bar { height:10px; background:var(--border); border-radius:6px; overflow:hidden; }
+  .bar > div { height:100%; width:0; transition:width .15s; }
+  .laer button { user-select:none; touch-action:none; }
+  .laer .b-bio{background:var(--bio)} .laer .b-plast{background:var(--plast)}
+  .laer .b-papper{background:var(--papper)} .laer .b-inget{background:var(--inget)}
+  .muted { color:var(--muted); font-size:.92rem; }
+  #status { color:var(--muted); font-size:.92rem; margin-top:8px; min-height:1.3em; }
+  #fel { color:#b3261e; margin-top:8px; display:none; }
+  label.slid { display:block; margin-top:12px; font-size:.92rem; color:var(--muted); }
+  input[type=range] { width:100%; }
+  #espRad { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Avfallskamera som lär sig</h1>
+  <p class="sub">AI:n lär sig av era bilder i mappen <code>samples/</code> och av nya exempel du tar med kameran.</p>
+
+  <div class="card">
+    <h2>1. Kamera</h2>
+    <div id="kamera"><span class="muted">Kameran är avstängd</span></div>
+    <div class="rad">
+      <select id="kalla">
+        <option value="webb">Webbkamera / mobilkamera</option>
+        <option value="esp">ESP32-CAM (stillbild, uppdateras hela tiden)</option>
+      </select>
+      <button id="start">Starta kameran</button>
+      <button id="stopp" class="sek" disabled>Stoppa</button>
+      <button id="byt" class="sek" disabled>Byt kamera</button>
+    </div>
+    <div class="rad" id="espRad">
+      <input type="text" id="espUrl" size="34" value="http://192.168.4.2/capture">
+      <span class="muted">Adressen som ger en stillbild. Bilden hämtas om och om igen via servern.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2. Resultat</h2>
+    <div id="resultat">
+      <div class="stor" id="svar">Väntar på kamera…</div>
+      <div class="liten" id="tips"></div>
+    </div>
+    <div id="staplar" style="margin-top:14px"></div>
+    <label class="slid">Säkerhetströskel: <b id="troskelVarde">70</b> %
+      <input type="range" id="troskel" min="40" max="99" value="70"></label>
+  </div>
+
+  <div class="card laer">
+    <h2>3. Lär AI:n</h2>
+    <p class="muted" style="margin-top:0">Rikta kameran mot ett föremål och <b>håll in</b> rätt knapp för att ta flera exempel (flytta föremålet lite emellan). Ta gärna även exempel på "Inget" (tom bakgrund eller bara en hand).</p>
+    <div class="rad">
+      <button class="b-bio" data-klass="bio">+ Bioavfall <span id="n-bio">0</span></button>
+      <button class="b-plast" data-klass="plast">+ Plast <span id="n-plast">0</span></button>
+      <button class="b-papper" data-klass="papper">+ Papper <span id="n-papper">0</span></button>
+      <button class="b-inget" data-klass="inget">+ Inget <span id="n-inget">0</span></button>
+    </div>
+    <div class="rad">
+      <button class="sek" id="omtrana">Träna om från samples</button>
+      <button class="sek" id="exportera">Exportera kunskap</button>
+      <button class="sek" id="importera">Importera kunskap</button>
+      <input type="file" id="fil" accept="application/json" style="display:none">
+    </div>
+    <div class="muted">Det AI:n lärt sig sparas automatiskt i webbläsaren.</div>
+    <div id="status"></div>
+    <div id="fel"></div>
+  </div>
+</main>
+
+<script>
+  // Laddar bibliotek från lib/ (om hamta_bibliotek.py körts) annars från internet
+  function laddaSkript(lokal, cdn) {
+    const prova = src => new Promise((ok, fail) => {
+      const t = document.createElement("script");
+      t.src = src; t.onload = ok; t.onerror = fail; document.head.appendChild(t);
+    });
+    return prova(lokal).catch(() => prova(cdn)).catch(() => null);
+  }
+  const bibliotek = (async () => {
+    await laddaSkript("lib/tf.min.js", "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js");
+    await laddaSkript("lib/mobilenet.min.js", "https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js");
+    await laddaSkript("lib/knn-classifier.min.js", "https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@1.2.6/dist/knn-classifier.min.js");
+  })();
+</script>
+<script>
+  const SAMPLES_MAPP = "./samples/";
+  const LAGRING = "avfallskamera-kunskap-v1";
+  const K = 10;            // antal närmaste grannar som röstar
+  const ALFA = 0.35;       // utjämning, högre = snabbare men skakigare
+
+  const KLASSER = {
+    bio:    { namn:"Bioavfall", farg:"var(--bio)",    tips:"Släng i matavfallet." },
+    plast:  { namn:"Plast",     farg:"var(--plast)",  tips:"Släng i plastförpackningar." },
+    papper: { namn:"Papper",    farg:"var(--papper)", tips:"Släng i pappersförpackningar / returpapper." },
+    inget:  { namn:"Inget avfall", farg:"var(--inget)", tips:"Visa ett föremål för kameran." }
+  };
+  const ORDNING = ["bio","plast","papper","inget"];
+
+  const el = id => document.getElementById(id);
+  const status = t => el("status").textContent = t || "";
+  const visaFel = t => { el("fel").style.display = t ? "block" : "none"; el("fel").textContent = t || ""; };
+
+  let net, knn, kor = false, animId = null, facingMode = "environment";
+  let stream = null, videoEl = null, imgEl = null;
+  let utjamnat = Object.fromEntries(ORDNING.map(k => [k, 0]));
+  let upptagen = false;
+
+  // Bygg staplar
+  ORDNING.forEach(k => {
+    el("staplar").insertAdjacentHTML("beforeend",
+      `<div class="stapel"><div class="namn"><span>${KLASSER[k].namn}</span><span id="p-${k}">0 %</span></div>
+       <div class="bar"><div id="b-${k}" style="background:${KLASSER[k].farg}"></div></div></div>`);
+  });
+  el("troskel").addEventListener("input", e => el("troskelVarde").textContent = e.target.value);
+  el("kalla").addEventListener("change", e => el("espRad").style.display = e.target.value === "esp" ? "flex" : "none");
+
+  // ---------- Hjälpfunktioner för bild -> inbäddning ----------
+  const arbetsyta = document.createElement("canvas");
+  arbetsyta.width = arbetsyta.height = 224;
+  const ctx = arbetsyta.getContext("2d", { willReadFrequently: true });
+
+  // Ritar mittenbeskuren kvadrat på vit bakgrund (så att genomskinliga PNG:er blir vita)
+  function ritaKvadrat(src, speglad) {
+    const w = src.videoWidth || src.naturalWidth || src.width;
+    const h = src.videoHeight || src.naturalHeight || src.height;
+    const s = Math.min(w, h);
+    ctx.save();
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 224, 224);
+    if (speglad) { ctx.translate(224, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(src, (w - s) / 2, (h - s) / 2, s, s, 0, 0, 224, 224);
+    ctx.restore();
+    return arbetsyta;
+  }
+  const inbadda = (src, speglad = false) => net.infer(ritaKvadrat(src, speglad), true); // 1024 tal
+
+  function lagg(label, src, speglad = false) {
+    tf.tidy(() => knn.addExample(inbadda(src, speglad), label));
+  }
+
+  // ---------- Starta: ladda MobileNet + lär från samples ----------
+  async function forbered() {
+    if (net) return;
+    status("Laddar bibliotek…");
+    await bibliotek;
+    if (!window.tf || !window.mobilenet || !window.knnClassifier)
+      throw new Error("Biblioteken kunde inte laddas. Datorn behöver internet en gång: kör hamta_bibliotek.py medan du är online (och ladda sedan om sidan).");
+    status("Laddar bildmodellen (MobileNet)…");
+    // Försök i ordning: 1) lib/mobilenet  2) sparad kopia i webbläsaren  3) internet (och spara kopia)
+    const harLokal = await fetch("lib/mobilenet/model.json", { method: "HEAD" }).then(r => r.ok).catch(() => false);
+    const cfg = url => ({ version: 2, alpha: 1.0, modelUrl: url, inputRange: [0, 1] });
+    if (harLokal) {
+      try { net = await mobilenet.load(cfg(location.origin + "/lib/mobilenet/model.json")); } catch (e) { console.warn(e); }
+    }
+    if (!net) {
+      try { net = await mobilenet.load(cfg("indexeddb://avfall-mobilenet-v2")); } catch (e) { /* ingen sparad kopia än */ }
+    }
+    if (!net) {
+      try {
+        net = await mobilenet.load({ version: 2, alpha: 1.0 });
+      } catch (e) {
+        throw new Error("Kunde inte hämta bildmodellen. Öppna sidan en gång med internet (vanligt wifi) så sparas den i webbläsaren. " + e.message);
+      }
+      try { await net.model.save("indexeddb://avfall-mobilenet-v2"); } catch (e) { console.warn("Kunde inte spara modellen lokalt:", e); }
+    }
+    knn = knnClassifier.create();
+    if (!ladda()) await tranaFranSamples();
+    uppdateraRaknare();
+  }
+
+  function laddaBild(url) {
+    return new Promise((ok, fail) => {
+      const im = new Image();
+      im.onload = () => ok(im);
+      im.onerror = () => fail(new Error("Kunde inte läsa " + url));
+      im.src = url;
+    });
+  }
+
+  async function tranaFranSamples() {
+    status("Läser samples…");
+    const manifest = await (await fetch(SAMPLES_MAPP + "manifest.json")).json();
+    knn.clearAllClasses();
+    const alla = Object.entries(manifest).flatMap(([klass, filer]) => filer.map(f => [klass, f]));
+    let i = 0;
+    for (const [klass, fil] of alla) {
+      const im = await laddaBild(SAMPLES_MAPP + fil);
+      lagg(klass, im, false);
+      lagg(klass, im, true);       // spegelvänd kopia = dubbelt så många exempel
+      status(`Lär från bilder… ${++i}/${alla.length}`);
+      await tf.nextFrame();
+    }
+    spara();
+    status(`Klar! Lärde mig av ${alla.length} bilder (${alla.length * 2} exempel med speglingar).`);
+  }
+
+  // ---------- Spara / ladda ----------
+  function serialisera() {
+    const ds = knn.getClassifierDataset();
+    return Object.fromEntries(Object.entries(ds).map(([k, t]) =>
+      [k, { shape: t.shape, data: Array.from(t.dataSync(), v => Math.round(v * 1000) / 1000) }]));
+  }
+  function deserialisera(obj) {
+    const ds = {};
+    Object.entries(obj).forEach(([k, v]) => ds[k] = tf.tensor2d(v.data, v.shape));
+    knn.clearAllClasses();
+    knn.setClassifierDataset(ds);
+  }
+  function spara() {
+    try { localStorage.setItem(LAGRING, JSON.stringify(serialisera())); }
+    catch (e) { status("Kunde inte spara i webbläsaren (fullt?). Använd Exportera kunskap."); }
+  }
+  function ladda() {
+    try {
+      const s = localStorage.getItem(LAGRING);
+      if (!s) return false;
+      deserialisera(JSON.parse(s));
+      status("Hämtade sparad kunskap.");
+      return true;
+    } catch (e) { return false; }
+  }
+  function uppdateraRaknare() {
+    const n = knn.getClassExampleCount();
+    ORDNING.forEach(k => el("n-" + k).textContent = n[k] || 0);
+  }
+
+  el("exportera").addEventListener("click", async () => {
+    await forbered();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(serialisera())], { type: "application/json" }));
+    a.download = "avfall-kunskap.json"; a.click();
+  });
+  el("importera").addEventListener("click", () => el("fil").click());
+  el("fil").addEventListener("change", async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { await forbered(); deserialisera(JSON.parse(await f.text())); spara(); uppdateraRaknare(); status("Importerade kunskap."); }
+    catch (err) { visaFel("Ogiltig fil: " + err.message); }
+    e.target.value = "";
+  });
+  el("omtrana").addEventListener("click", async () => {
+    if (!confirm("Detta tar bort dina egna kameraexempel och tränar om bara från samples. Fortsätta?")) return;
+    try { await forbered(); await tranaFranSamples(); uppdateraRaknare(); } catch (e) { visaFel(e.message); }
+  });
+
+  // ---------- Kamera ----------
+  function aktivKalla() { return videoEl && videoEl.style.display !== "none" ? videoEl : imgEl; }
+
+  async function startaKamera() {
+    visaFel("");
+    try {
+      await forbered();
+      el("kamera").innerHTML = "";
+      videoEl = imgEl = null;
+      if (el("kalla").value === "esp") {
+        const url = el("espUrl").value.trim();
+        if (!url) throw new Error("Skriv in ESP32-CAM:ens ström-URL först.");
+        imgEl = document.createElement("img");
+        espAdress = url;
+        el("kamera").appendChild(imgEl);
+        await hamtaEspBild();          // första bilden; kastar fel om kameran inte svarar
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
+        videoEl = document.createElement("video");
+        videoEl.playsInline = true; videoEl.muted = true; videoEl.srcObject = stream;
+        if (facingMode === "user") videoEl.style.transform = "scaleX(-1)";
+        await videoEl.play();
+        el("kamera").appendChild(videoEl);
+      }
+      kor = true;
+      el("start").disabled = true; el("stopp").disabled = false; el("byt").disabled = el("kalla").value === "esp";
+      status("Kameran är igång.");
+      animId = requestAnimationFrame(loop);
+    } catch (e) {
+      console.error(e);
+      visaFel("Kunde inte starta: " + e.message + " (Öppna sidan via http://localhost eller https, inte direkt från en fil.)");
+      status("");
+    }
+  }
+
+  function stoppaKamera() {
+    kor = false;
+    if (animId) cancelAnimationFrame(animId);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; videoEl = imgEl = null;
+    el("kamera").innerHTML = '<span class="muted">Kameran är avstängd</span>';
+    el("start").disabled = false; el("stopp").disabled = true; el("byt").disabled = true;
+    el("svar").textContent = "Väntar på kamera…"; el("tips").textContent = "";
+    el("resultat").style.background = "var(--osaker)";
+  }
+  async function bytKamera() { facingMode = facingMode === "environment" ? "user" : "environment"; stoppaKamera(); await startaKamera(); }
+
+  // ---------- ESP32-CAM: hämta en ny stillbild via vår server ----------
+  let espAdress = "";
+  function hamtaEspBild() {
+    return new Promise((ok, fail) => {
+      imgEl.onload = ok;
+      imgEl.onerror = () => fail(new Error("Fick ingen bild från " + espAdress + ". Är datorn ansluten till kamerans wifi, och stämmer adressen?"));
+      imgEl.src = "/esp?u=" + encodeURIComponent(espAdress) + "&t=" + Date.now();   // t = undviker cache
+    });
+  }
+
+  // ---------- Förutsägelse ----------
+  async function loop() {
+    if (!kor) return;
+    if (!upptagen) {
+      upptagen = true;
+      try {
+        if (imgEl) await hamtaEspBild();   // ny bild varje varv, ett varv i taget
+        await forutsag();
+        visaFel("");
+      } catch (e) {
+        visaFel(e.message);
+        await new Promise(r => setTimeout(r, 1000));   // vänta lite innan nästa försök
+      } finally { upptagen = false; }
+    }
+    animId = requestAnimationFrame(loop);
+  }
+
+  async function forutsag() {
+    const kalla = videoEl || imgEl;
+    if (!kalla || knn.getNumClasses() === 0) return;
+    const spegla = false;
+    const a = inbadda(kalla, spegla);
+    const r = await knn.predictClass(a, K);
+    a.dispose();
+
+    ORDNING.forEach(k => {
+      const p = r.confidences[k] || 0;
+      utjamnat[k] = ALFA * p + (1 - ALFA) * utjamnat[k];
+      el("b-" + k).style.width = (utjamnat[k] * 100).toFixed(0) + "%";
+      el("p-" + k).textContent = (utjamnat[k] * 100).toFixed(0) + " %";
+    });
+
+    const bast = ORDNING.reduce((m, k) => utjamnat[k] > utjamnat[m] ? k : m, ORDNING[0]);
+    const sakerhet = utjamnat[bast] * 100;
+    const ruta = el("resultat");
+    if (sakerhet >= Number(el("troskel").value) && bast !== "inget") {
+      el("svar").textContent = `${KLASSER[bast].namn} (${sakerhet.toFixed(0)} %)`;
+      el("tips").textContent = KLASSER[bast].tips;
+      ruta.style.background = KLASSER[bast].farg;
+    } else if (bast === "inget" && sakerhet >= Number(el("troskel").value)) {
+      el("svar").textContent = "Inget avfall i bild";
+      el("tips").textContent = "";
+      ruta.style.background = "var(--inget)";
+    } else {
+      el("svar").textContent = "Osäker – visa föremålet tydligare";
+      el("tips").textContent = "Lär AI:n genom att hålla in en knapp under steg 3.";
+      ruta.style.background = "var(--osaker)";
+    }
+  }
+
+  // ---------- Lär från kameran (håll in knappen) ----------
+  document.querySelectorAll(".laer button[data-klass]").forEach(knapp => {
+    let timer = null;
+    const ett = () => {
+      const kalla = videoEl || imgEl;
+      if (!kalla || !net) { status("Starta kameran först."); return; }
+      try { lagg(knapp.dataset.klass, kalla, false); uppdateraRaknare(); } catch (e) { visaFel(e.message); }
+    };
+    const stoppa = () => { if (timer) { clearInterval(timer); timer = null; spara(); status("Sparat."); } };
+    knapp.addEventListener("pointerdown", e => { e.preventDefault(); ett(); timer = setInterval(ett, 200); });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(ev => knapp.addEventListener(ev, stoppa));
+  });
+
+  window.addEventListener("load", () => forbered().then(() => status("Redo – starta kameran.")).catch(e => visaFel(e.message)));
+
+  el("start").addEventListener("click", startaKamera);
+  el("stopp").addEventListener("click", stoppaKamera);
+  el("byt").addEventListener("click", bytKamera);
+</script>
+</body>
+</html>
