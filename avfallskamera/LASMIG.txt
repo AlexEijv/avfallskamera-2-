@@ -22,3 +22,25 @@ Steg 3 - kamera:
 Lära AI:n: håll in "+ Bioavfall / Plast / Papper / Inget" medan kameran visar föremålet.
 Fler bilder i samples/: lägg PNG-filer där, skriv in namnen i samples/manifest.json
 och klicka "Träna om från samples".
+
+LAMPOR
+======
+Tre lampor: grön = bioavfall, gul = plast, röd = papper (ändras med rullistorna på sidan).
+När AI:n ser avfall lyser rätt lampa i 3 sekunder (ändra i rutan "Lampan lyser") och släcks sedan,
+som när en papperskorg öppnas. Den tänds igen först när föremålet tagits bort och ett nytt visas.
+Kryssa i "Skicka till ESP32" för de riktiga lamporna.
+Koppling: gemensam GND, grön på IO4, gul på IO2, röd på IO14 (via motstånd 220-330 ohm).
+Byt pinnar i LAMP_PINNAR överst i esp32_main.py.
+
+ESP32-PROGRAM
+=============
+esp32_main.py är ett komplett program för ESP32-CAM (MicroPython). Öppna det i Thonny och välj
+Arkiv > Spara som > MicroPython-enhet, och döp det till main.py. Starta om kortet (RST).
+Testsida: http://192.168.4.2/   Bild: /capture   Lampor: /led?gron=1&gul=0&rod=0&ms=3000
+
+FELSÖKNING LAMPOR
+=================
+1. lamptest.py (kör i Thonny) tänder en pinne i taget och skriver ut vilken. Visar om kopplingen funkar.
+2. esp32_main.py gör ett lamptest varje gång kortet startar (RST). Det går också att köra på
+   http://192.168.4.2/lamptest
+3. Testa kommando direkt i webbläsaren (på kamerans wifi): http://192.168.4.2/led?gron=1&gul=0&rod=0

@@ -43,6 +43,12 @@
   label.slid { display:block; margin-top:12px; font-size:.92rem; color:var(--muted); }
   input[type=range] { width:100%; }
   #espRad { display:none; }
+  .lampor { display:flex; gap:22px; justify-content:center; margin:8px 0 14px; }
+  .lampa { display:flex; flex-direction:column; align-items:center; gap:6px; font-size:.85rem; color:var(--muted); }
+  .lampa i { width:46px; height:46px; border-radius:50%; background:var(--border); border:2px solid var(--border); transition:all .15s; }
+  .lampa.pa i { background:var(--lc); border-color:var(--lc); box-shadow:0 0 18px 6px var(--lc); }
+  .lampa.pa { color:var(--text); font-weight:600; }
+  .rad label { font-size:.92rem; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -79,6 +85,24 @@
       <input type="range" id="troskel" min="40" max="99" value="70"></label>
   </div>
 
+  <div class="card">
+    <h2>Lampor</h2>
+    <div class="lampor" id="lampor"></div>
+    <div class="rad" id="lampKarta"></div>
+    <div class="rad">
+      <label>Lampan lyser <input type="number" id="lampSek" min="1" max="30" value="3" style="width:60px"> sek</label>
+      <label><input type="checkbox" id="skickaLampor" checked> Skicka till ESP32</label>
+      <input type="text" id="lampUrl" size="54" value="http://192.168.4.2/led?gron={gron}&amp;gul={gul}&amp;rod={rod}&amp;ms={ms}">
+    </div>
+    <div class="rad">
+      <button class="sek" data-test="gron">Testa grön</button>
+      <button class="sek" data-test="gul">Testa gul</button>
+      <button class="sek" data-test="rod">Testa röd</button>
+      <button class="sek" data-test="av">Alla av</button>
+    </div>
+    <div class="muted" id="lampStatus">När AI:n ser avfall lyser rätt lampa en stund (som när en papperskorg öppnas) och släcks sedan. Den tänds igen först när föremålet tagits bort och ett nytt visas. Kryssa i rutan för att även tända de riktiga lamporna.</div>
+  </div>
+
   <div class="card laer">
     <h2>3. Lär AI:n</h2>
     <p class="muted" style="margin-top:0">Rikta kameran mot ett föremål och <b>håll in</b> rätt knapp för att ta flera exempel (flytta föremålet lite emellan). Ta gärna även exempel på "Inget" (tom bakgrund eller bara en hand).</p>
@@ -87,6 +111,12 @@
       <button class="b-plast" data-klass="plast">+ Plast <span id="n-plast">0</span></button>
       <button class="b-papper" data-klass="papper">+ Papper <span id="n-papper">0</span></button>
       <button class="b-inget" data-klass="inget">+ Inget <span id="n-inget">0</span></button>
+    </div>
+    <div class="rad">
+      <button class="sek" data-rensa="bio">Rensa Bio</button>
+      <button class="sek" data-rensa="plast">Rensa Plast</button>
+      <button class="sek" data-rensa="papper">Rensa Papper</button>
+      <button class="sek" data-rensa="inget">Rensa Inget</button>
     </div>
     <div class="rad">
       <button class="sek" id="omtrana">Träna om från samples</button>
@@ -119,6 +149,7 @@
   const SAMPLES_MAPP = "./samples/";
   const LAGRING = "avfallskamera-kunskap-v1";
   const K = 10;            // antal närmaste grannar som röstar
+  const MAX_PER_KLASS = 60;   // så att en klass inte kan dominera genom att ha många fler exempel
   const ALFA = 0.35;       // utjämning, högre = snabbare men skakigare
 
   const KLASSER = {
@@ -318,8 +349,91 @@
     el("start").disabled = false; el("stopp").disabled = true; el("byt").disabled = true;
     el("svar").textContent = "Väntar på kamera…"; el("tips").textContent = "";
     el("resultat").style.background = "var(--osaker)";
+    aktivKlass = null; kandKlass = null; sattLampor(null); skickaOmAndrad();
   }
   async function bytKamera() { facingMode = facingMode === "environment" ? "user" : "environment"; stoppaKamera(); await startaKamera(); }
+
+  // ---------- Lampor ----------
+  const LAMPOR = [
+    { id: "gron", namn: "Grön", farg: "#3fa34d", standard: "bio" },
+    { id: "gul",  namn: "Gul",  farg: "#e0b800", standard: "plast" },
+    { id: "rod",  namn: "Röd",  farg: "#d93025", standard: "papper" }
+  ];
+  const LAMP_LAGRING = "avfallskamera-lampor-v1";
+  let lampKarta = Object.fromEntries(LAMPOR.map(l => [l.id, l.standard]));
+  try { Object.assign(lampKarta, JSON.parse(localStorage.getItem(LAMP_LAGRING) || "{}")); } catch (e) {}
+  let onskadLampor = { gron: 0, gul: 0, rod: 0 };
+  let sistaSkickat = "", senastForsok = 0;
+  let kandKlass = null, kandAntal = 0, aktivKlass = null;
+
+  LAMPOR.forEach(l => {
+    el("lampor").insertAdjacentHTML("beforeend",
+      `<div class="lampa" id="lampa-${l.id}" style="--lc:${l.farg}"><i></i><span>${l.namn}</span></div>`);
+    el("lampKarta").insertAdjacentHTML("beforeend",
+      `<label>${l.namn} lampa = <select id="map-${l.id}"></select></label>`);
+    const sel = el("map-" + l.id);
+    ["bio", "plast", "papper"].forEach(k => sel.add(new Option(KLASSER[k].namn, k)));
+    sel.value = lampKarta[l.id];
+    sel.addEventListener("change", () => {
+      lampKarta[l.id] = sel.value;
+      try { localStorage.setItem(LAMP_LAGRING, JSON.stringify(lampKarta)); } catch (e) {}
+      sattLampor(null);
+    });
+  });
+
+  function visaLampor(t) { LAMPOR.forEach(l => el("lampa-" + l.id).classList.toggle("pa", !!t[l.id])); }
+
+  // klass = "bio" | "plast" | "papper" | null (ingen lampa)
+  function sattLampor(klass) {
+    onskadLampor = Object.fromEntries(LAMPOR.map(l => [l.id, klass && lampKarta[l.id] === klass ? 1 : 0]));
+    visaLampor(onskadLampor);
+  }
+
+  // Byter lampa först när samma resultat setts i 3 bildrutor i rad (undviker blinkande)
+  function stabilisera(klass) {
+    if (klass === kandKlass) kandAntal++; else { kandKlass = klass; kandAntal = 1; }
+    if (kandAntal >= 3 && klass !== aktivKlass) {
+      aktivKlass = klass;
+      clearTimeout(lampTimer);
+      sattLampor(klass);
+      if (klass) lampTimer = setTimeout(() => { sattLampor(null); if (!kor) skickaOmAndrad(); }, lampMs());
+    }
+  }
+  let lampTimer = null;
+  const lampMs = () => Math.max(1, Number(el("lampSek").value) || 3) * 1000;
+
+  // Skickar bara när något ändrats. Anropas mellan bildhämtningarna så kameran inte får två anrop samtidigt.
+  async function skickaOmAndrad(tvinga = false) {
+    const nyckel = JSON.stringify(onskadLampor);
+    if (!el("skickaLampor").checked) return;
+    if (!tvinga && nyckel === sistaSkickat) return;
+    if (!tvinga && Date.now() - senastForsok < 2000) return;       // vänta lite efter ett misslyckat försök
+    senastForsok = Date.now();
+    const url = el("lampUrl").value
+      .replace("{gron}", onskadLampor.gron).replace("{gul}", onskadLampor.gul).replace("{rod}", onskadLampor.rod)
+      .replace("{ms}", lampMs());
+    try {
+      // Lampservern på ESP32 tillåter anrop från sidan (CORS). Skicka direkt
+      // så att testknapparna inte är beroende av den lokala mellanservern.
+      const r = await fetch(url + "&t=" + Date.now());
+      if (!r.ok) throw new Error("svar " + r.status);
+      sistaSkickat = nyckel;
+      el("lampStatus").textContent = "Skickade till ESP32: " + url;
+    } catch (e) {
+      el("lampStatus").textContent = "Kunde inte skicka till lampadressen (" + e.message + "). Kolla adressen och att ESP32-koden tar emot den.";
+    }
+  }
+
+  document.querySelectorAll("[data-test]").forEach(b => b.addEventListener("click", async () => {
+    const v = b.dataset.test;
+    onskadLampor = { gron: v === "gron" ? 1 : 0, gul: v === "gul" ? 1 : 0, rod: v === "rod" ? 1 : 0 };
+    visaLampor(onskadLampor);
+    aktivKlass = "__test"; kandKlass = null;                         // så att kameran inte skriver över direkt
+    clearTimeout(lampTimer);
+    if (v !== "av") lampTimer = setTimeout(() => { sattLampor(null); if (!kor) skickaOmAndrad(); }, lampMs());
+    if (el("skickaLampor").checked) await skickaOmAndrad(true);
+    else el("lampStatus").textContent = "Visas bara på skärmen (rutan 'Skicka till ESP32' är inte ikryssad).";
+  }));
 
   // ---------- ESP32-CAM: hämta en ny stillbild via vår server ----------
   let espAdress = "";
@@ -339,6 +453,7 @@
       try {
         if (imgEl) await hamtaEspBild();   // ny bild varje varv, ett varv i taget
         await forutsag();
+        await skickaOmAndrad();
         visaFel("");
       } catch (e) {
         visaFel(e.message);
@@ -367,14 +482,17 @@
     const sakerhet = utjamnat[bast] * 100;
     const ruta = el("resultat");
     if (sakerhet >= Number(el("troskel").value) && bast !== "inget") {
+      stabilisera(bast);
       el("svar").textContent = `${KLASSER[bast].namn} (${sakerhet.toFixed(0)} %)`;
       el("tips").textContent = KLASSER[bast].tips;
       ruta.style.background = KLASSER[bast].farg;
     } else if (bast === "inget" && sakerhet >= Number(el("troskel").value)) {
+      stabilisera(null);
       el("svar").textContent = "Inget avfall i bild";
       el("tips").textContent = "";
       ruta.style.background = "var(--inget)";
     } else {
+      stabilisera(null);
       el("svar").textContent = "Osäker – visa föremålet tydligare";
       el("tips").textContent = "Lär AI:n genom att hålla in en knapp under steg 3.";
       ruta.style.background = "var(--osaker)";
@@ -387,14 +505,27 @@
     const ett = () => {
       const kalla = videoEl || imgEl;
       if (!kalla || !net) { status("Starta kameran först."); return; }
+      if ((knn.getClassExampleCount()[knapp.dataset.klass] || 0) >= MAX_PER_KLASS) {
+        status(`Max ${MAX_PER_KLASS} exempel för ${KLASSER[knapp.dataset.klass].namn}. Rensa klassen först om du vill ta nya.`);
+        return;
+      }
       try { lagg(knapp.dataset.klass, kalla, false); uppdateraRaknare(); } catch (e) { visaFel(e.message); }
     };
     const stoppa = () => { if (timer) { clearInterval(timer); timer = null; spara(); status("Sparat."); } };
-    knapp.addEventListener("pointerdown", e => { e.preventDefault(); ett(); timer = setInterval(ett, 200); });
+    knapp.addEventListener("pointerdown", e => { e.preventDefault(); ett(); timer = setInterval(ett, 300); });
     ["pointerup", "pointerleave", "pointercancel"].forEach(ev => knapp.addEventListener(ev, stoppa));
   });
 
   window.addEventListener("load", () => forbered().then(() => status("Redo – starta kameran.")).catch(e => visaFel(e.message)));
+
+  document.querySelectorAll("[data-rensa]").forEach(b => b.addEventListener("click", async () => {
+    try {
+      await forbered();
+      knn.clearClass(b.dataset.rensa);
+      spara(); uppdateraRaknare();
+      status(`Rensade alla exempel för ${KLASSER[b.dataset.rensa].namn}.`);
+    } catch (e) { status(`Det fanns inga exempel för ${KLASSER[b.dataset.rensa].namn}.`); }
+  }));
 
   el("start").addEventListener("click", startaKamera);
   el("stopp").addEventListener("click", stoppaKamera);
